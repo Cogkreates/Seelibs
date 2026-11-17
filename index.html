@@ -201,11 +201,12 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
 
   var CW = 560, CH = 800, K = 1.5;
 
-  function pageCanvas(kicker, text, folio) {
+  function pageCanvas(kicker, text, folio, left) {
     var cv = mk(CW * K, CH * K), ctx = cv.getContext("2d"); ctx.scale(K, K);
-    paperBg(ctx, CW, CH, true);
+    paperBg(ctx, CW, CH, !left);
+    var x0 = left ? 44 : 56;
     ctx.fillStyle = "#7a6a52"; ctx.font = "500 17px Menlo, monospace"; ctx.textBaseline = "alphabetic";
-    ctx.fillText((kicker || "").toUpperCase().slice(0, 40), 56, 64);
+    ctx.fillText((kicker || "").toUpperCase().slice(0, 40), x0, 64);
     var size = 34, lines;
     var maxH = CH - 64 - 90 - 70;
     for (; size >= 22; size -= 2) {
@@ -214,8 +215,8 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
       if (lines.length * size * 1.4 <= maxH) break;
     }
     ctx.fillStyle = "#2b2219";
-    lines.forEach(function (l, i) { ctx.fillText(l, 56, 118 + i * size * 1.4); });
-    if (folio) { ctx.fillStyle = "#7a6a52"; ctx.font = "16px Menlo, monospace"; ctx.textAlign = "center"; ctx.fillText(folio, CW / 2 + 6, CH - 34); }
+    lines.forEach(function (l, i) { ctx.fillText(l, x0, 118 + i * size * 1.4); });
+    if (folio) { ctx.fillStyle = "#7a6a52"; ctx.font = "16px Menlo, monospace"; ctx.textAlign = "center"; ctx.fillText(folio, CW / 2 + (left ? -6 : 6), CH - 34); }
     return cv;
   }
   function titleCanvas(b) {
@@ -533,20 +534,30 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
   var putBack = labelMesh(0.36, 0.1, 720, ["Put back"], { size: 56, font: "600 56px Menlo, monospace", color: "#1b1408", bg: "#d9a441" });
   putBack.position.set(0, -PH / 2 - 0.125, 0.03);
   rg.add(putBack);
+  var ZB = { size: 56, font: "600 56px Menlo, monospace", color: "#1b1408", bg: "#d9a441" };
+  var zoomIn = labelMesh(0.14, 0.1, 256, ["A+"], ZB);
+  zoomIn.position.set(0.27, -PH / 2 - 0.125, 0.031);
+  var zoomOut = labelMesh(0.14, 0.1, 256, ["A\u2212"], ZB);
+  zoomOut.position.set(-0.27, -PH / 2 - 0.125, 0.031);
+  rg.add(zoomIn, zoomOut);
+  var readScale = 1;
+  function setZoom(d) { readScale = Math.max(0.8, Math.min(1.6, readScale + d)); }
 
   function zFor(i) { return i >= cur ? -(i - cur) * DZ : -(cur - 1 - i) * DZ; }
 
-  function frontFor(d, b) {
-    if (d.t === "cover") return coverCanvas(b);
-    if (d.t === "title") return titleCanvas(b);
-    if (d.t === "end") return pageCanvas("End", b.mine ? "That is the last page of your copy." : "That is as far as this shelf copy goes. Full public-domain books come in a later version.", "");
-    return pageCanvas(d.k, d.text, d.n + " / " + b.pages.length);
+  function faceCanvas(f, b, left) {
+    if (f.t === "cover") return coverCanvas(b);
+    if (f.t === "endpaper") return endpaperCanvas(b);
+    if (f.t === "title") return titleCanvas(b);
+    if (f.t === "end") return pageCanvas("End", b.mine ? "That is the last page of your copy." : "That is as far as this shelf copy goes. Full public-domain books come in a later version.", "", left);
+    return pageCanvas(f.k, f.text, f.n + " / " + b.pages.length, left);
   }
 
   function makeLeaf(i) {
-    var front = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: tex(frontFor(descs[i], current)) }));
+    var d = descs[i];
+    var front = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({ map: tex(faceCanvas(d.f, current, false)) }));
     front.position.set(PW / 2, 0, 0);
-    var back = new THREE.Mesh(planeGeo, i === 0 ? new THREE.MeshBasicMaterial({ map: tex(endpaperCanvas(current)) }) : blankMat);
+    var back = new THREE.Mesh(planeGeo, d.b.t === "blank" ? blankMat : new THREE.MeshBasicMaterial({ map: tex(faceCanvas(d.b, current, true)) }));
     back.rotation.y = Math.PI;
     back.position.set(PW / 2, 0, -0.0004);
     var piv = new THREE.Group();
@@ -589,9 +600,13 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
   function buildBook(b) {
     disposeBook();
     cur = 0;
-    descs = [{ t: "cover" }, { t: "title" }];
-    b.pages.forEach(function (p, i) { descs.push({ t: "page", k: p[0], text: p[1], n: i + 1 }); });
-    descs.push({ t: "end" });
+    var faces = [{ t: "cover" }, { t: "endpaper" }, { t: "title" }];
+    b.pages.forEach(function (p, i) { faces.push({ t: "page", k: p[0], text: p[1], n: i + 1 }); });
+    if (faces.length % 2 === 1) faces.push({ t: "blank" });
+    faces.push({ t: "end" });
+    faces.push({ t: "blank" });
+    descs = [];
+    for (var j = 0; j < faces.length; j += 2) descs.push({ f: faces[j], b: faces[j + 1] });
     blankMat = new THREE.MeshBasicMaterial({ map: tex(blankBackCanvas()) });
     var boardMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(b.c), roughness: 0.8 });
     var depth = (WIN_FWD + 1) * DZ + 0.012;
@@ -611,7 +626,12 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
     bookTargetX = cur > 0 ? 0 : -PW / 2;
     if (cur > 0 && boardL) boardL.visible = true;
     var last = descs.length - 1;
-    var txt = cur === 0 ? "Cover" : (cur === last ? "The end" : (cur === 1 ? "Title page" : "Page " + (cur - 1) + " of " + current.pages.length));
+    var np = current.pages.length, lp = 2 * cur - 3, rp = 2 * cur - 2, txt;
+    if (cur === 0) txt = "Cover";
+    else if (cur === 1) txt = "Title page";
+    else if (lp > np) txt = "The end";
+    else if (rp > np) txt = "Page " + lp + " of " + np;
+    else txt = "Pages " + lp + "\u2013" + rp + " of " + np;
     redraw(counter, [txt], COUNTER_OPTS);
     setHint(cur === 0 ? "Pinch the cover to open it." : "Swipe a page sideways to turn it. Pull down to put the book back.",
             cur === 0 ? "Tap the cover to open it." : "Swipe a page sideways to turn it, or pull down to put the book back.");
@@ -724,7 +744,7 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
   }
   function targets() {
     if (state === "shelf") return spines.concat([addBtn]);
-    if (state === "reading") return cur === 0 ? [hitNext, putBack] : [hitNext, hitPrev, putBack];
+    if (state === "reading") return cur === 0 ? [hitNext, putBack, zoomIn, zoomOut] : [hitNext, hitPrev, putBack, zoomIn, zoomOut];
     return [];
   }
   function activate(obj) {
@@ -734,6 +754,8 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
       if (obj === hitNext) next();
       else if (obj === hitPrev) prev();
       else if (obj === putBack) closeBook();
+      else if (obj === zoomIn) setZoom(0.2);
+      else if (obj === zoomOut) setZoom(-0.2);
     }
   }
   function pickFromController(c) {
@@ -1177,7 +1199,7 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
       var t = Math.max(0, Math.min(1, tween.t));
       var e = ease(t);
       rg.position.lerpVectors(tween.from, READ_POS, e);
-      rg.scale.setScalar(0.3 + 0.7 * e);
+      rg.scale.setScalar((0.3 + 0.7 * e) * (tween.dir > 0 ? 1 : readScale));
       if (tween.dir > 0 && t >= 1) { tween = null; state = "reading"; }
       else if (tween.dir < 0 && t <= 0) { tween = null; rg.visible = false; activeSpine.visible = true; state = "shelf"; }
     }
@@ -1205,6 +1227,7 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
       sp.scale.set(sc, sc, sc);
       if (tt >= 1) { sp.position.copy(sp.userData.home); sp.scale.set(1, 1, 1); delete sp.userData.snap; }
     });
+    if (state === "reading") { var zs = rg.scale.x + (readScale - rg.scale.x) * Math.min(1, dt * 6); rg.scale.setScalar(zs); }
     var over = null;
     if (renderer.xr.isPresenting) {
       ctrls.forEach(function (c) {
